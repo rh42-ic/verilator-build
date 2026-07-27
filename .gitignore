@@ -1,0 +1,6 @@
+# Build artifacts
+build/
+staging/
+dist/
+verilator-src/
+.ccache/

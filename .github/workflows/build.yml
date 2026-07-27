@@ -1,0 +1,170 @@
+name: Build Verilator Packages
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    container:
+      image: almalinux:8
+    steps:
+      - name: Checkout verilator-build
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: bash scripts/install-deps.sh
+
+      - name: Build verilator and packages
+        env:
+          TAG: ${{ github.ref_name }}
+        run: bash scripts/build.sh "$TAG"
+
+      - name: Verify packages
+        run: |
+          echo "=== Packages ==="
+          ls -lh dist/
+          echo ""
+          echo "=== RPM contents ==="
+          for pkg in dist/*.rpm; do
+            echo "--- $(basename "$pkg") ---"
+            rpm -qlp "$pkg" | head -40
+          done
+          echo ""
+          echo "=== DEB contents ==="
+          for pkg in dist/*.deb; do
+            echo "--- $(basename "$pkg") ---"
+            ar t "$pkg" | grep -q data.tar.xz && ar p "$pkg" data.tar.xz | tar tJ | head -40
+            ar t "$pkg" | grep -q data.tar.gz && ar p "$pkg" data.tar.gz | tar tz | head -40
+            ar t "$pkg" | grep -q data.tar.zst && ar p "$pkg" data.tar.zst | tar --zstd -t | head -40
+          done
+          echo ""
+          echo "=== Dynamic library requirements ==="
+          # Extract verilator_bin from RPM to check ldd
+          rpm2cpio dist/*.rpm | cpio -idmu './usr/bin/verilator_bin' 2>/dev/null
+          ldd usr/bin/verilator_bin 2>/dev/null || true
+
+      - name: Generate release notes
+        run: |
+          TAG='${{ github.ref_name }}'
+          cat > dist/release.md << 'ENDOFFILE'
+          Based on [Verilator TAG_PLACEHOLDER](https://github.com/verilator/verilator/releases/tag/TAG_PLACEHOLDER).
+
+          ## Build Configuration
+
+          | Option | Value |
+          |--------|-------|
+          | OS | AlmaLinux 8 (glibc 2.28) |
+          | Compiler | GCC 15 (gcc-toolset-15) |
+          | Build system | autotools (autoconf + make) |
+          | `--enable-jemalloc` | yes (dynamic) |
+          | `--enable-partial-static` | yes (default: static libgcc/libstdc++) |
+          | `--enable-ccwarn` | yes |
+          | Target CPU | `x86-64-v3` (Haswell 2013+) |
+          | Hardening | `-Wl,-z,relro -Wl,-z,now` |
+
+          ## System Requirements
+
+          - glibc ≥ 2.28 (RHEL 8+, Ubuntu 18.04+, Debian 10+)
+          - x86-64-v3 CPU (Intel Haswell 2013+ / AMD Excavator 2015+)
+
+          ## Runtime Dependencies
+
+          The package manager will pull these automatically:
+
+          | Library | RPM | DEB |
+          |---------|-----|-----|
+          | zlib | `zlib` | `zlib1g` |
+          | lz4 | `lz4` | `liblz4-1` |
+          | jemalloc | `jemalloc` | `libjemalloc2` |
+
+          ## Included Binaries
+
+          | File | Description |
+          |------|-------------|
+          | `verilator` | Main entry point (Perl script) |
+          | `verilator_bin` | Compiler engine (C++, optimized) |
+          | `verilator_bin_dbg` | Debug engine |
+          | `verilator_coverage_bin_dbg` | Coverage engine |
+
+          ## Optional Runtime Dependencies
+
+          Install these separately for additional features:
+
+          | Package | Feature |
+          |---------|---------|
+          | z3 | Constrained randomization (SMT solver) |
+          | gtkwave | Waveform viewer (FST tracing) |
+          | mold | Faster Verilated model linking |
+          | ccache | Faster Verilated model compilation |
+          ENDOFFILE
+          # Replace placeholder
+          sed -i "s/TAG_PLACEHOLDER/${TAG}/g" dist/release.md
+
+          # Helper: normalize paths (DEB has ./usr/..., RPM has /usr/...)
+          normalize() {
+            sed -e 's#^\./##' -e '/\/$/d' -e 's#^usr/#/usr/#'
+          }
+          # Helper: filter noise entries
+          filter_listing() {
+            sed -e '/^\/usr\/lib\/\.build-id\//d' \
+                -e '/^\/usr\/share\/doc\//d' \
+                -e '/^\/usr\/share\/man\//d' \
+                -e '/^\/usr\/share\/info\//d'
+          }
+
+          for pkg in dist/*.rpm dist/*.deb; do
+            base="$(basename "$pkg")"
+            echo "### ${base}" >> dist/release.md
+            echo '```' >> dist/release.md
+
+            listing=$(mktemp)
+            case "$pkg" in
+              *.rpm)
+                rpm -qlp "$pkg" 2>/dev/null | filter_listing | sort > "$listing"
+                ;;
+              *.deb)
+                if ar t "$pkg" 2>/dev/null | grep -q data.tar.xz; then
+                  ar p "$pkg" data.tar.xz | tar tJ 2>/dev/null | normalize | filter_listing | sort > "$listing"
+                elif ar t "$pkg" 2>/dev/null | grep -q data.tar.gz; then
+                  ar p "$pkg" data.tar.gz | tar tz 2>/dev/null | normalize | filter_listing | sort > "$listing"
+                elif ar t "$pkg" 2>/dev/null | grep -q data.tar.zst; then
+                  ar p "$pkg" data.tar.zst | tar --zstd -t 2>/dev/null | normalize | filter_listing | sort > "$listing"
+                fi
+                ;;
+            esac
+
+            # Condensed tree: files at depth 3 shown individually,
+            # deeper paths collapsed into directory with file count
+            awk -F/ '{
+              depth = NF - 1
+              if (depth == 3) {
+                print "  " $0
+              } else if (depth >= 4) {
+                dir = "/" $2 "/" $3 "/" $4
+                counts[dir]++
+              }
+            }
+            END {
+              for (d in counts)
+                printf "  %s/  (%d files)\n", d, counts[d]
+            }' "$listing" >> dist/release.md
+
+            rm -f "$listing"
+            echo '```' >> dist/release.md
+            echo "" >> dist/release.md
+          done
+
+      - name: Create release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: |
+            dist/*.rpm
+            dist/*.deb
+          body_path: dist/release.md
+          generate_release_notes: false
