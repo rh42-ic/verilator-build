@@ -69,6 +69,8 @@ fpm -s dir -t rpm \
     --license "LGPL-3.0-only OR Artistic-2.0" \
     --maintainer verilator-build \
     --rpm-os linux \
+    --depends perl \
+    --depends python3 \
     --depends zlib \
     --depends lz4 \
     --depends jemalloc \
@@ -85,6 +87,8 @@ fpm -s dir -t deb \
     --url "https://verilator.org" \
     --license "LGPL-3.0-only OR Artistic-2.0" \
     --maintainer verilator-build \
+    --depends perl \
+    --depends python3 \
     --depends zlib1g \
     --depends liblz4-1 \
     --depends libjemalloc2 \
