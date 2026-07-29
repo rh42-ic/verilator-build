@@ -63,10 +63,11 @@ jobs:
           | Compiler | GCC 15 (gcc-toolset-15) |
           | Build system | autotools (autoconf + make) |
           | `--enable-jemalloc` | yes (dynamic) |
-          | `--enable-partial-static` | yes (default: static libgcc/libstdc++) |
+          | `--enable-partial-static` | no (`--disable-partial-static`) |
           | `--enable-ccwarn` | yes |
           | Target CPU | `x86-64-v3` (Haswell 2013+) |
-          | Hardening | `-Wl,-z,relro -Wl,-z,now` |
+          | CFLAGS | `-O3 -ffunction-sections -fdata-sections` |
+          | LDFLAGS | `-Wl,--as-needed -Wl,-z,relro -Wl,-z,now -static-libgcc -Wl,-gc-sections` |
 
           ## System Requirements
 
@@ -77,18 +78,20 @@ jobs:
 
           The package manager will pull these automatically:
 
-          | Library | RPM | DEB |
+          | Purpose | RPM | DEB |
           |---------|-----|-----|
-          | zlib | `zlib` | `zlib1g` |
-          | lz4 | `lz4` | `liblz4-1` |
-          | jemalloc | `jemalloc` | `libjemalloc2` |
+          | Script interpreters | `perl`, `python3` | `perl`, `python3` |
+          | C++ model compilation | `make`, `gcc-c++` | `make`, `g++` |
+          | C++ standard library | `libstdc++` | `libstdc++6` |
+          | FST waveform (headers) | `zlib-devel`, `lz4-devel` | `zlib1g-dev`, `liblz4-dev` |
+          | Memory allocation | `jemalloc` | `libjemalloc2` |
 
           ## Included Binaries
 
           | File | Description |
           |------|-------------|
-          | `verilator` | Main entry point (Perl script) |
-          | `verilator_bin` | Compiler engine (C++, optimized) |
+          | `verilator` | Main entry point |
+          | `verilator_bin` | Compiler engine |
           | `verilator_bin_dbg` | Debug engine |
           | `verilator_coverage_bin_dbg` | Coverage engine |
 
