@@ -31,7 +31,7 @@ autoconf
 #   (default) passes -static-libstdc++ which strips DT_NEEDED libstdc++.so.6,
 #   causing unresolved C++ allocator operators at runtime.
 #   Manually preserve -static-libgcc and -Wl,-gc-sections (safe, no such issues).
-CFLAGS="-march=x86-64-v3 -mtune=generic -O3"
+CFLAGS="-march=x86-64-v3 -mtune=generic -O3 -ffunction-sections -fdata-sections"
 CXXFLAGS="${CFLAGS}"
 LDFLAGS="-Wl,--as-needed -Wl,-z,relro -Wl,-z,now -static-libgcc -Wl,-gc-sections"
 
@@ -74,8 +74,10 @@ fpm -s dir -t rpm \
     --depends perl \
     --depends python3 \
     --depends libstdc++ \
-    --depends zlib \
-    --depends lz4 \
+    --depends make \
+    --depends gcc-c++ \
+    --depends zlib-devel \
+    --depends lz4-devel \
     --depends jemalloc \
     -p "${DIST_DIR}/verilator-${VERSION}-1.el8.x86_64.rpm" \
     -C "${STAGING_DIR}" usr/
@@ -93,8 +95,10 @@ fpm -s dir -t deb \
     --depends perl \
     --depends python3 \
     --depends libstdc++6 \
-    --depends zlib1g \
-    --depends liblz4-1 \
+    --depends make \
+    --depends g++ \
+    --depends zlib1g-dev \
+    --depends liblz4-dev \
     --depends libjemalloc2 \
     -p "${DIST_DIR}/verilator-${VERSION}-1_amd64.deb" \
     -C "${STAGING_DIR}" usr/
