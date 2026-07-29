@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Build Verilator from source with static-runtime linkage for portability
-# Target: RHEL 8+ / glibc ≥ 2.28, x86-64-v3
+# Build Verilator from source for RHEL 8+ / x86-64-v3
 set -euo pipefail
 
 TAG="${1:?Usage: $0 <verilator-git-tag>}"
@@ -28,16 +27,19 @@ autoconf
 
 # ----- Configure -----
 # x86-64-v3: Haswell (2013+) — AVX2, FMA, BMI, BMI2, LZCNT
-# --enable-partial-static (default): injects -static-libgcc -static-libstdc++ -Wl,-gc-sections
-# Hardening flags are safe with GCC 15 + binutils 2.38+
+# --disable-partial-static: link libstdc++ dynamically. --enable-partial-static
+#   (default) passes -static-libstdc++ which strips DT_NEEDED libstdc++.so.6,
+#   causing unresolved C++ allocator operators at runtime.
+#   Manually preserve -static-libgcc and -Wl,-gc-sections (safe, no such issues).
 CFLAGS="-march=x86-64-v3 -mtune=generic -O3"
 CXXFLAGS="${CFLAGS}"
-LDFLAGS="-Wl,--as-needed -Wl,-z,relro -Wl,-z,now"
+LDFLAGS="-Wl,--as-needed -Wl,-z,relro -Wl,-z,now -static-libgcc -Wl,-gc-sections"
 
 ./configure \
     --prefix=/usr \
     --enable-jemalloc \
     --enable-ccwarn \
+    --disable-partial-static \
     CFLAGS="${CFLAGS}" \
     CXXFLAGS="${CXXFLAGS}" \
     LDFLAGS="${LDFLAGS}"
@@ -71,6 +73,7 @@ fpm -s dir -t rpm \
     --rpm-os linux \
     --depends perl \
     --depends python3 \
+    --depends libstdc++ \
     --depends zlib \
     --depends lz4 \
     --depends jemalloc \
@@ -89,6 +92,7 @@ fpm -s dir -t deb \
     --maintainer verilator-build \
     --depends perl \
     --depends python3 \
+    --depends libstdc++6 \
     --depends zlib1g \
     --depends liblz4-1 \
     --depends libjemalloc2 \

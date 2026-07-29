@@ -38,6 +38,7 @@ apt install ./verilator-{version}-1_amd64.deb
 
 | 库 | 用途 |
 |----|------|
+| libstdc++ | C++ 标准库 |
 | zlib | FST 波形压缩 |
 | lz4 | FST 波形压缩 |
 | jemalloc | 高性能内存分配 |
@@ -46,7 +47,7 @@ apt install ./verilator-{version}-1_amd64.deb
 
 | 组件 | 说明 |
 |------|------|
-| libstdc++、libgcc | C/C++ 运行时（`--enable-partial-static`） |
+| libgcc | GCC 运行时（`-static-libgcc`） |
 
 ## 包含的文件
 
