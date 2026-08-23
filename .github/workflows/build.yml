@@ -92,6 +92,24 @@ jobs:
           | CFLAGS | `-O3 -ffunction-sections -fdata-sections` |
           | LDFLAGS | `-Wl,--as-needed -Wl,-z,relro -Wl,-z,now -static-libgcc -Wl,-gc-sections` |
 
+          ## Windows (ZIP)
+
+          `verilator-VERSION_PLACEHOLDER-win64.zip` — MSVC 2022 build (CMake + Ninja,
+          static CRT `/MT`, `/O2 /arch:AVX2`, `/GL`+`/LTCG`), no VC++ runtime DLL
+          dependency. Requires Windows 10 1607+ and an AVX2 CPU.
+
+          Runtime prerequisites (see README.txt inside the archive):
+
+          | Purpose | Package |
+          |---------|---------|
+          | Perl wrapper scripts | Strawberry Perl |
+          | Compiling generated models | Visual Studio 2022 (`--compiler msvc`) or MinGW-w64 g++ |
+          | CMake workflow | CMake 3.15+ |
+          | FST tracing | lz4 headers (e.g. via vcpkg) |
+
+          Verified: `verilator_bin --version`, upstream `cmake_tracing_c` example
+          built and run.
+
           ## Verification
 
           - Regression suite: `test_regress` dist-vlt hashset 0/4 (official suite)
@@ -136,8 +154,8 @@ jobs:
           | mold | Faster Verilated model linking |
           | ccache | Faster Verilated model compilation |
           ENDOFFILE
-          # Replace placeholder
-          sed -i "s/TAG_PLACEHOLDER/${TAG}/g" dist/release.md
+          # Replace placeholders
+          sed -i -e "s/TAG_PLACEHOLDER/${TAG}/g" -e "s/VERSION_PLACEHOLDER/${TAG#v}/g" dist/release.md
 
           # Helper: normalize paths (DEB has ./usr/..., RPM has /usr/...)
           normalize() {
@@ -200,6 +218,34 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  build-windows:
+    name: Build Windows ZIP ${{ github.ref_name }}
+    runs-on: windows-latest
+    steps:
+      - name: Checkout verilator-build
+        uses: actions/checkout@v4
+        with:
+          path: buildrepo
+
+      - name: Cache win_flex_bison
+        uses: actions/cache@v4
+        with:
+          path: win-work/win_flex_bison
+          key: winflexbison-v1
+
+      - name: Build verilator (MSVC) and package ZIP
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: ./buildrepo/scripts/build-win.ps1 "$TAG"
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-packages
+          path: dist/*.zip
+          if-no-files-found: error
+
   verify-rpm:
     name: Verify RPM on clean AlmaLinux 8
     runs-on: ubuntu-latest
@@ -256,12 +302,18 @@ jobs:
   release:
     name: Create release
     runs-on: ubuntu-latest
-    needs: [build, verify-rpm, verify-deb]
+    needs: [build, build-windows, verify-rpm, verify-deb]
     steps:
       - name: Download packages
         uses: actions/download-artifact@v4
         with:
           name: packages
+          path: dist
+
+      - name: Download Windows package
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-packages
           path: dist
 
       - name: Create release
@@ -270,5 +322,6 @@ jobs:
           files: |
             dist/*.rpm
             dist/*.deb
+            dist/*.zip
           body_path: dist/release.md
           generate_release_notes: false
