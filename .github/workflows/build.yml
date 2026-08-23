@@ -7,6 +7,12 @@ on:
 permissions:
   contents: write
 
+env:
+  # Same ccache configuration as the official CI (reusable-build.yml):
+  # content-based compiler check and a workspace-local cache dir.
+  CCACHE_COMPILERCHECK: content
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+
 jobs:
   build:
     name: Build ${{ github.ref_name }}
@@ -20,8 +26,12 @@ jobs:
       - name: Cache ccache
         uses: actions/cache@v4
         with:
-          path: ~/.ccache
-          key: ccache-el8-v1
+          path: ${{ env.CCACHE_DIR }}
+          # Per-release key with fallback to the previous release, same
+          # key/restore-keys pattern as the official CI.
+          key: ccache-el8-${{ github.ref_name }}
+          restore-keys: |
+            ccache-el8-
 
       - name: Install build dependencies
         run: bash scripts/install-deps.sh
@@ -61,9 +71,15 @@ jobs:
           source /opt/rh/gcc-toolset-15/enable
           export PATH="${PWD}/staging/usr/bin:${PATH}"
           export VERILATOR_ROOT="${PWD}/staging/usr/share/verilator"
+          # ccache stats around the suite, same as official ci-test.bash
+          ccache -z
+          TEST_START=$SECONDS
           make -C verilator-src/test_regress \
             SCENARIOS="--dist --vlt --driver-clean" \
             DRIVER_HASHSET=--hashset=0/4
+          ccache -svv
+          ccache --evict-older-than "$((SECONDS - TEST_START + 60))s"
+          ccache -svv
 
       - name: Smoke test (built tree)
         run: |
@@ -85,9 +101,11 @@ jobs:
           | OS | AlmaLinux 8 (glibc 2.28) |
           | Compiler | GCC 15 (gcc-toolset-15) |
           | Build system | autotools (autoconf + make + ccache + mold) |
-          | `--enable-jemalloc` | yes (dynamic) |
-          | `--enable-partial-static` | no (`--disable-partial-static`) |
           | `--enable-ccwarn` | yes |
+          | `--enable-longtests` | yes |
+          | `--enable-light-debug` | yes (backtrace-quality debug info) |
+          | `--enable-partial-static` | no (`--disable-partial-static`) |
+          | jemalloc | yes (auto-detected, dynamic) |
           | Target CPU | `x86-64-v3` (Haswell 2013+) |
           | CFLAGS | `-O3 -ffunction-sections -fdata-sections` |
           | LDFLAGS | `-Wl,--as-needed -Wl,-z,relro -Wl,-z,now -static-libgcc -Wl,-gc-sections` |
@@ -140,7 +158,7 @@ jobs:
           |------|-------------|
           | `verilator` | Main entry point |
           | `verilator_bin` | Compiler engine |
-          | `verilator_bin_dbg` | Debug engine (symbols kept) |
+          | `verilator_bin_dbg` | Debug engine (light-debug symbols, backtraces) |
           | `verilator_coverage_bin_dbg` | Coverage engine |
 
           ## Optional Runtime Dependencies

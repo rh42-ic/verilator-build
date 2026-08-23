@@ -20,7 +20,6 @@ dnf install -y \
     make \
     perl \
     python38 \
-    ccache \
     help2man \
     tar \
     xz \
@@ -59,6 +58,18 @@ if ! mold --version 2>/dev/null | grep -q "${MOLD_VERSION}"; then
         tar xz -C /usr/local --strip-components=1
 fi
 
+# ----- ccache (compile cache) -----
+# EL8's ccache 3.7 predates the --evict-older-than option used by the official
+# CI (ci/ci-build.bash), so install the prebuilt ccache 4.x like mold above.
+CCACHE_VERSION=4.14
+if ! ccache --version 2>/dev/null | grep -q "${CCACHE_VERSION}"; then
+    _tmpdir="$(mktemp -d)"
+    curl -fsSL "https://github.com/ccache/ccache/releases/download/v${CCACHE_VERSION}/ccache-${CCACHE_VERSION}-linux-x86_64-glibc.tar.xz" |
+        tar xJ -C "${_tmpdir}" --strip-components=1 "ccache-${CCACHE_VERSION}-linux-x86_64-glibc/ccache"
+    install -m 755 "${_tmpdir}/ccache" /usr/local/bin/ccache
+    rm -rf "${_tmpdir}"
+fi
+
 # ----- Packaging tools -----
 dnf install -y \
     rpm-build \
@@ -75,3 +86,4 @@ g++ --version | head -1
 flex --version | head -1
 bison --version | head -1
 python3 --version
+ccache --version | head -1

@@ -27,25 +27,46 @@ autoconf
 
 # ----- Configure -----
 # x86-64-v3: Haswell (2013+) — AVX2, FMA, BMI, BMI2, LZCNT
-# --disable-partial-static: link libstdc++ dynamically. --enable-partial-static
-#   (default) passes -static-libstdc++ which strips DT_NEEDED libstdc++.so.6,
-#   causing unresolved C++ allocator operators at runtime.
-#   Manually preserve -static-libgcc and -Wl,-gc-sections (safe, no such issues).
+# Flags match the official CI (ci/ci-build.bash) where possible:
+#   --enable-ccwarn        official CI default (ccwarn=true): warnings are errors
+#   --enable-longtests     official build flag (affects test_regress only)
+#   --enable-light-debug   official build flag; reduces the debug executables
+#                          to backtrace-quality debug info (smaller packages)
+# jemalloc is NOT passed explicitly: like the official CI, configure
+# auto-detects it (default=check) from the jemalloc-devel package installed
+# by install-deps.sh.
+#
+# Deviations kept for old-OS compatibility only:
+#   --disable-partial-static  --enable-partial-static (the default) links
+#     -static-libstdc++, embedding the GCC 15 libstdc++, which requires glibc
+#     symbols newer than 2.28 and crashes on RHEL 8 / Debian 10.
+#   -static-libgcc in LDFLAGS  configure only adds it under partial-static;
+#     kept so the binary does not depend on the old system libgcc_s.so.1.
+#   -march=x86-64-v3  documented product requirement (see README).
 CFLAGS="-march=x86-64-v3 -mtune=generic -O3 -ffunction-sections -fdata-sections"
 CXXFLAGS="${CFLAGS}"
 LDFLAGS="-Wl,--as-needed -Wl,-z,relro -Wl,-z,now -static-libgcc -Wl,-gc-sections"
 
 ./configure \
     --prefix=/usr \
-    --enable-jemalloc \
     --enable-ccwarn \
+    --enable-longtests \
+    --enable-light-debug \
     --disable-partial-static \
     CFLAGS="${CFLAGS}" \
     CXXFLAGS="${CXXFLAGS}" \
     LDFLAGS="${LDFLAGS}"
 
 # ----- Build -----
-make -j$(nproc)
+# Same flow as the official CI (ci/ci-build.bash): ccache stats around the
+# build, -k keeps going so every error is reported in one pass, and the
+# eviction bounds the cache to (build time + 60s) of fresh entries.
+ccache -z
+BUILD_START=$SECONDS
+make -j"$(nproc)" -k
+ccache -svv
+ccache --evict-older-than "$((SECONDS - BUILD_START + 60))s"
+ccache -svv
 
 # ----- Install to staging -----
 rm -rf "${STAGING_DIR}"
@@ -56,7 +77,7 @@ make install DESTDIR="${STAGING_DIR}"
 # them destroys their only purpose.
 find "${STAGING_DIR}" -type f -executable -print0 2>/dev/null | while IFS= read -r -d '' f; do
     case "$(basename "$f")" in
-        *_dbg) continue ;;
+    *_dbg) continue ;;
     esac
     file --brief "$f" | grep -qi 'elf' && strip "$f" || true
 done
@@ -64,7 +85,10 @@ done
 # ----- Build packages with fpm -----
 mkdir -p "${DIST_DIR}"
 # fpm is installed by install-deps.sh; guard for manual runs
-command -v fpm >/dev/null || { echo "ERROR: fpm not found (run scripts/install-deps.sh first)" >&2; exit 1; }
+command -v fpm >/dev/null || {
+    echo "ERROR: fpm not found (run scripts/install-deps.sh first)" >&2
+    exit 1
+}
 
 # RPM (RHEL 8/9, AlmaLinux, Rocky Linux)
 fpm -s dir -t rpm \
