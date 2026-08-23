@@ -61,6 +61,9 @@ jobs:
 
       - name: Verify x86-64-v3 ISA requirement
         run: |
+          # EL8 system readelf (binutils 2.30) cannot decode the x86 ISA
+          # level property; use the binutils shipped with gcc-toolset-15.
+          source /opt/rh/gcc-toolset-15/enable
           cd pkg-check
           readelf -n usr/bin/verilator_bin | grep -q "x86-64-v3" || {
             echo "FAIL: binary does not declare x86-64-v3 ISA requirement" >&2; exit 1; }
@@ -248,20 +251,23 @@ jobs:
       - name: Cache win_flex_bison
         uses: actions/cache@v4
         with:
-          path: win-work/win_flex_bison
+          # Script computes its root from $PSScriptRoot (buildrepo), so the
+          # cache must live under buildrepo/win-work, not the workspace root.
+          path: buildrepo/win-work/win_flex_bison
           key: winflexbison-v1
 
       - name: Build verilator (MSVC) and package ZIP
         shell: pwsh
         env:
           TAG: ${{ github.ref_name }}
-        run: ./buildrepo/scripts/build-win.ps1 "$TAG"
+        # NB: pwsh reads env vars as $env:TAG, not $TAG (PowerShell variable)
+        run: ./buildrepo/scripts/build-win.ps1 "$env:TAG"
 
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
           name: windows-packages
-          path: dist/*.zip
+          path: buildrepo/dist/*.zip
           if-no-files-found: error
 
   verify-rpm:

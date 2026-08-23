@@ -43,9 +43,13 @@ autoconf
 #   -static-libgcc in LDFLAGS  configure only adds it under partial-static;
 #     kept so the binary does not depend on the old system libgcc_s.so.1.
 #   -march=x86-64-v3  documented product requirement (see README).
+#   -Wl,-z,x86-64-v3  make the linker declare GNU_PROPERTY_X86_ISA_1_NEEDED
+#     = v3 in the binary. ld only merges the input objects' "ISA used"
+#     properties, and GCC 15 emits just baseline there, so without this flag
+#     the binary would not advertise x86-64-v3 at all.
 CFLAGS="-march=x86-64-v3 -mtune=generic -O3 -ffunction-sections -fdata-sections"
 CXXFLAGS="${CFLAGS}"
-LDFLAGS="-Wl,--as-needed -Wl,-z,relro -Wl,-z,now -static-libgcc -Wl,-gc-sections"
+LDFLAGS="-Wl,--as-needed -Wl,-z,relro -Wl,-z,now -static-libgcc -Wl,-gc-sections -Wl,-z,x86-64-v3"
 
 ./configure \
     --prefix=/usr \
