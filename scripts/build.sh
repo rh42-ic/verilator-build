@@ -51,14 +51,20 @@ make -j$(nproc)
 rm -rf "${STAGING_DIR}"
 make install DESTDIR="${STAGING_DIR}"
 
-# Strip ELF binaries
+# Strip ELF binaries. Keep *_dbg binaries intact: they are the shipping
+# debug builds (verilator_bin_dbg, verilator_coverage_bin_dbg) and stripping
+# them destroys their only purpose.
 find "${STAGING_DIR}" -type f -executable -print0 2>/dev/null | while IFS= read -r -d '' f; do
+    case "$(basename "$f")" in
+        *_dbg) continue ;;
+    esac
     file --brief "$f" | grep -qi 'elf' && strip "$f" || true
 done
 
 # ----- Build packages with fpm -----
 mkdir -p "${DIST_DIR}"
-gem install fpm -v '~> 1.15.0' --no-document 2>/dev/null || true
+# fpm is installed by install-deps.sh; guard for manual runs
+command -v fpm >/dev/null || { echo "ERROR: fpm not found (run scripts/install-deps.sh first)" >&2; exit 1; }
 
 # RPM (RHEL 8/9, AlmaLinux, Rocky Linux)
 fpm -s dir -t rpm \

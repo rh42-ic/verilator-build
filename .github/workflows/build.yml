@@ -17,6 +17,12 @@ jobs:
       - name: Checkout verilator-build
         uses: actions/checkout@v4
 
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-el8-v1
+
       - name: Install build dependencies
         run: bash scripts/install-deps.sh
 
@@ -25,29 +31,46 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: bash scripts/build.sh "$TAG"
 
-      - name: Verify packages
+      - name: Verify dynamic dependency whitelist
         run: |
-          echo "=== Packages ==="
-          ls -lh dist/
-          echo ""
-          echo "=== RPM contents ==="
-          for pkg in dist/*.rpm; do
-            echo "--- $(basename "$pkg") ---"
-            rpm -qlp "$pkg" | head -40
+          # The packages must not pick up unexpected shared libraries:
+          # everything beyond this whitelist would break the minimum-OS promise.
+          rm -rf pkg-check && mkdir pkg-check && cd pkg-check
+          rpm2cpio ../dist/*.rpm | cpio -idmu './usr/bin/verilator_bin*' 2>/dev/null
+          ALLOWED="libc.so.6 libm.so.6 libstdc++.so.6 libgcc_s.so.1 libjemalloc.so.2 libdl.so.2 libpthread.so.0 libatomic.so.1 ld-linux-x86-64.so.2"
+          for bin in usr/bin/verilator_bin usr/bin/verilator_bin_dbg; do
+            echo "--- $(basename "$bin") ---"
+            DEPS=$(ldd "$bin" | awk '/=>/{print $1}' | sort -u)
+            echo "$DEPS"
+            for d in $DEPS; do
+              echo "$ALLOWED" | tr ' ' '\n' | grep -qx "$d" || {
+                echo "FAIL: unexpected dependency: $d" >&2; exit 1; }
+            done
           done
-          echo ""
-          echo "=== DEB contents ==="
-          for pkg in dist/*.deb; do
-            echo "--- $(basename "$pkg") ---"
-            ar t "$pkg" | grep -q data.tar.xz && ar p "$pkg" data.tar.xz | tar tJ | head -40
-            ar t "$pkg" | grep -q data.tar.gz && ar p "$pkg" data.tar.gz | tar tz | head -40
-            ar t "$pkg" | grep -q data.tar.zst && ar p "$pkg" data.tar.zst | tar --zstd -t | head -40
-          done
-          echo ""
-          echo "=== Dynamic library requirements ==="
-          # Extract verilator_bin from RPM to check ldd
-          rpm2cpio dist/*.rpm | cpio -idmu './usr/bin/verilator_bin' 2>/dev/null
-          ldd usr/bin/verilator_bin 2>/dev/null || true
+          echo "=== dependency whitelist check PASSED ==="
+
+      - name: Verify x86-64-v3 ISA requirement
+        run: |
+          cd pkg-check
+          readelf -n usr/bin/verilator_bin | grep -q "x86-64-v3" || {
+            echo "FAIL: binary does not declare x86-64-v3 ISA requirement" >&2; exit 1; }
+          echo "=== x86-64-v3 check PASSED ==="
+
+      - name: Run regression test (dist-vlt 0/4)
+        run: |
+          source /opt/rh/gcc-toolset-15/enable
+          export PATH="${PWD}/staging/usr/bin:${PATH}"
+          export VERILATOR_ROOT="${PWD}/staging/usr/share/verilator"
+          make -C verilator-src/test_regress \
+            SCENARIOS="--dist --vlt --driver-clean" \
+            DRIVER_HASHSET=--hashset=0/4
+
+      - name: Smoke test (built tree)
+        run: |
+          source /opt/rh/gcc-toolset-15/enable
+          export PATH="${PWD}/staging/usr/bin:${PATH}"
+          export VERILATOR_ROOT="${PWD}/staging/usr/share/verilator"
+          bash scripts/smoke.sh
 
       - name: Generate release notes
         run: |
@@ -61,13 +84,20 @@ jobs:
           |--------|-------|
           | OS | AlmaLinux 8 (glibc 2.28) |
           | Compiler | GCC 15 (gcc-toolset-15) |
-          | Build system | autotools (autoconf + make) |
+          | Build system | autotools (autoconf + make + ccache + mold) |
           | `--enable-jemalloc` | yes (dynamic) |
           | `--enable-partial-static` | no (`--disable-partial-static`) |
           | `--enable-ccwarn` | yes |
           | Target CPU | `x86-64-v3` (Haswell 2013+) |
           | CFLAGS | `-O3 -ffunction-sections -fdata-sections` |
           | LDFLAGS | `-Wl,--as-needed -Wl,-z,relro -Wl,-z,now -static-libgcc -Wl,-gc-sections` |
+
+          ## Verification
+
+          - Regression suite: `test_regress` dist-vlt hashset 0/4 (official suite)
+          - Smoke test: minimal design verilated, compiled and run with VCD tracing
+          - Clean-container install + smoke: AlmaLinux 8 (RPM), Debian 10 (DEB, glibc 2.28 floor)
+          - Dynamic dependency whitelist and x86-64-v3 ISA requirement asserted
 
           ## System Requirements
 
@@ -92,7 +122,7 @@ jobs:
           |------|-------------|
           | `verilator` | Main entry point |
           | `verilator_bin` | Compiler engine |
-          | `verilator_bin_dbg` | Debug engine |
+          | `verilator_bin_dbg` | Debug engine (symbols kept) |
           | `verilator_coverage_bin_dbg` | Coverage engine |
 
           ## Optional Runtime Dependencies
@@ -162,6 +192,77 @@ jobs:
             echo '```' >> dist/release.md
             echo "" >> dist/release.md
           done
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: dist/
+          if-no-files-found: error
+
+  verify-rpm:
+    name: Verify RPM on clean AlmaLinux 8
+    runs-on: ubuntu-latest
+    container:
+      image: almalinux:8
+    needs: build
+    steps:
+      - name: Checkout verilator-build
+        uses: actions/checkout@v4
+
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: dist
+
+      - name: Install RPM
+        run: dnf install -y ./dist/*.rpm
+
+      - name: Smoke test installed package
+        run: bash scripts/smoke.sh
+
+  verify-deb:
+    name: Verify DEB on Debian 10 (glibc 2.28 floor)
+    runs-on: ubuntu-latest
+    container:
+      image: debian:10
+    needs: build
+    steps:
+      - name: Checkout verilator-build
+        uses: actions/checkout@v4
+
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: dist
+
+      - name: Point EOL apt sources at archive.debian.org
+        run: |
+          echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid-until
+          sed -i \
+            -e 's|http://deb.debian.org/debian|http://archive.debian.org/debian|' \
+            -e 's|http://security.debian.org/debian-security|http://archive.debian.org/debian-security|' \
+            /etc/apt/sources.list
+          apt-get update
+
+      - name: Install DEB
+        run: apt-get install -y ./dist/*.deb
+
+      - name: Smoke test installed package
+        run: bash scripts/smoke.sh
+
+  release:
+    name: Create release
+    runs-on: ubuntu-latest
+    needs: [build, verify-rpm, verify-deb]
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: dist
 
       - name: Create release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
