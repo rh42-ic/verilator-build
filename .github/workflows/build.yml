@@ -5,7 +5,7 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   # Same ccache configuration as the official CI (reusable-build.yml):
@@ -21,17 +21,17 @@ jobs:
       image: almalinux:8
     steps:
       - name: Checkout verilator-build
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
 
       - name: Cache ccache
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5  # zizmor: ignore[cache-poisoning]
         with:
           path: ${{ env.CCACHE_DIR }}
-          # Per-release key with fallback to the previous release, same
-          # key/restore-keys pattern as the official CI.
-          key: ccache-el8-${{ github.ref_name }}
-          restore-keys: |
-            ccache-el8-
+          # ccache is content-addressed, so a fixed key safely reuses the
+          # cache across tags (and avoids zizmor cache-poisoning flags)
+          key: ccache-el8-v1
 
       - name: Install build dependencies
         run: bash scripts/install-deps.sh
@@ -69,21 +69,6 @@ jobs:
             echo "FAIL: binary does not declare x86-64-v3 ISA requirement" >&2; exit 1; }
           echo "=== x86-64-v3 check PASSED ==="
 
-      - name: Run regression test (dist-vlt 0/4)
-        run: |
-          source /opt/rh/gcc-toolset-15/enable
-          export PATH="${PWD}/staging/usr/bin:${PATH}"
-          export VERILATOR_ROOT="${PWD}/staging/usr/share/verilator"
-          # ccache stats around the suite, same as official ci-test.bash
-          ccache -z
-          TEST_START=$SECONDS
-          make -C verilator-src/test_regress \
-            SCENARIOS="--dist --vlt --driver-clean" \
-            DRIVER_HASHSET=--hashset=0/4
-          ccache -svv
-          ccache --evict-older-than "$((SECONDS - TEST_START + 60))s"
-          ccache -svv
-
       - name: Smoke test (built tree)
         run: |
           source /opt/rh/gcc-toolset-15/enable
@@ -92,8 +77,9 @@ jobs:
           bash scripts/smoke.sh
 
       - name: Generate release notes
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          TAG='${{ github.ref_name }}'
           cat > dist/release.md << 'ENDOFFILE'
           Based on [Verilator TAG_PLACEHOLDER](https://github.com/verilator/verilator/releases/tag/TAG_PLACEHOLDER).
 
@@ -233,7 +219,7 @@ jobs:
           done
 
       - name: Upload packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: packages
           path: dist/
@@ -244,12 +230,13 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout verilator-build
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          persist-credentials: false
           path: buildrepo
 
       - name: Cache win_flex_bison
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5  # zizmor: ignore[cache-poisoning]
         with:
           # Script computes its root from $PSScriptRoot (buildrepo), so the
           # cache must live under buildrepo/win-work, not the workspace root.
@@ -264,11 +251,79 @@ jobs:
         run: ./buildrepo/scripts/build-win.ps1 "$env:TAG"
 
       - name: Upload Windows package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: windows-packages
           path: buildrepo/dist/*.zip
           if-no-files-found: error
+
+  test:
+    # Full regression suite on a modern system, mirroring the official CI
+    # (build-test.yml -> reusable-test.yml): the EL8 build container's glibc
+    # (2.28) cannot run the wavediff release binary (needs 2.34+), so the
+    # suite runs here on Ubuntu with the same tool set as upstream.
+    name: Test dist-vlt ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:26.04
+    needs: build
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: packages
+          path: dist
+
+      - name: Install test dependencies
+        run: |
+          apt-get update
+          # Same tool set as official ci-install.bash (test stage)
+          apt-get install -y ccache gdb jq lcov libfl-dev libsystemc-dev \
+            mold libjemalloc-dev zlib1g-dev liblz4-dev python3-distro \
+            python3-clang z3
+
+      - name: Install wavediff
+        run: |
+          WAVETOOLS_VERSION=v0.1.2
+          _tmpdir=$(mktemp -d)
+          curl -fsSL "https://github.com/hudson-trading/wavetools/releases/download/${WAVETOOLS_VERSION}/wavetools-${WAVETOOLS_VERSION}-linux-x86_64.tar.gz" |
+            tar xz -C "${_tmpdir}" --strip-components=1 "wavetools-${WAVETOOLS_VERSION}-linux-x86_64/wavediff"
+          install -m 755 "${_tmpdir}/wavediff" /usr/local/bin/wavediff
+          rm -rf "${_tmpdir}"
+          wavediff --version
+
+      - name: Install DEB package
+        run: apt-get install -y ./dist/*.deb
+
+      - name: Checkout Verilator source at tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+          repository: verilator/verilator
+          ref: ${{ github.ref_name }}
+          path: verilator-src
+          fetch-depth: 1
+
+      - name: Cache ccache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5  # zizmor: ignore[cache-poisoning]
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-test-v1
+
+      - name: Run regression test (dist-vlt 0/4)
+        run: |
+          export VERILATOR_ROOT=/usr/share/verilator
+          # Same env as official ci-test.bash
+          export VERILATOR_TEST_NO_CONTRIBUTORS=1
+          export VERILATOR_TEST_NO_LINT_PY=1
+          ccache -z
+          TEST_START=$SECONDS
+          make -C verilator-src/test_regress \
+            SCENARIOS="--dist --vlt --driver-clean" \
+            DRIVER_HASHSET=--hashset=0/4
+          ccache -svv
+          ccache --evict-older-than "$((SECONDS - TEST_START + 60))s"
+          ccache -svv
 
   verify-rpm:
     name: Verify RPM on clean AlmaLinux 8
@@ -278,10 +333,12 @@ jobs:
     needs: build
     steps:
       - name: Checkout verilator-build
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
 
       - name: Download packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: packages
           path: dist
@@ -300,10 +357,12 @@ jobs:
     needs: build
     steps:
       - name: Checkout verilator-build
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
 
       - name: Download packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: packages
           path: dist
@@ -326,16 +385,18 @@ jobs:
   release:
     name: Create release
     runs-on: ubuntu-latest
-    needs: [build, build-windows, verify-rpm, verify-deb]
+    permissions:
+      contents: write
+    needs: [build, build-windows, test, verify-rpm, verify-deb]
     steps:
       - name: Download packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: packages
           path: dist
 
       - name: Download Windows package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: windows-packages
           path: dist
