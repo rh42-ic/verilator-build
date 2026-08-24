@@ -1,0 +1,41 @@
+`timescale 1ns/1ps
+
+module fulladd (  input [3:0] a,
+                  input [3:0] b,
+                  input c_in,
+                  output c_out,
+                  output [3:0] sum);
+
+   assign {c_out, sum} = a + b + c_in;
+endmodule
+
+module tb_fulladd;
+	// 1. Declare testbench variables
+   reg [3:0] a;
+   reg [3:0] b;
+   reg c_in;
+   wire [3:0] sum;
+   wire c_out;
+   integer i;
+
+	// 2. Instantiate the design and connect to testbench variables
+   fulladd  fa0 ( .a (a),
+                  .b (b),
+                  .c_in (c_in),
+                  .c_out (c_out),
+                  .sum (sum));
+
+	// 3. Provide stimulus to test the design
+   initial begin
+      a <= 0;
+      b <= 0;
+      c_in <= 0;
+
+		// Use a for loop to apply random values to the input
+      for (i = 0; i < 5; i = i+1) begin
+         #10 a <= $random;
+             b <= $random;
+         		 c_in <= $random;
+      end
+   end
+endmodule

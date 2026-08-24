@@ -59,6 +59,27 @@ jobs:
           done
           echo "=== dependency whitelist check PASSED ==="
 
+      - name: Verify libc/libstdc++ symbol versions
+        run: |
+          # The packages promise to run on glibc 2.28 systems (RHEL 8, Debian 10)
+          # whose system libstdc++ is GCC 8.3 = GLIBCXX_3.4.25. ldd cannot catch
+          # a violation: it prints "version `...' not found" on stderr but still
+          # resolves the library path, so the whitelist check above passes.
+          cd pkg-check
+          failed=0
+          for bin in usr/bin/verilator_bin usr/bin/verilator_bin_dbg; do
+            max_glibcxx=$(readelf -V "$bin" | grep -oE 'Name: GLIBCXX_[0-9.]+' | awk '{print $NF}' | sort -V -u | tail -1)
+            max_glibc=$(readelf -V "$bin" | grep -oE 'Name: GLIBC_[0-9.]+' | awk '{print $NF}' | sort -V -u | tail -1)
+            echo "--- $(basename "$bin"): ${max_glibcxx:-none} / ${max_glibc:-none} ---"
+            [ "$(printf '%s\n' GLIBCXX_3.4.25 "$max_glibcxx" | sort -V | tail -1)" = "GLIBCXX_3.4.25" ] || failed=1
+            [ "$(printf '%s\n' GLIBC_2.28 "$max_glibc" | sort -V | tail -1)" = "GLIBC_2.28" ] || failed=1
+          done
+          [ "$failed" = 0 ] || {
+            echo "FAIL: binary requires newer libc/libstdc++ than the promised floor" >&2
+            exit 1
+          }
+          echo "=== libc/libstdc++ symbol version check PASSED ==="
+
       - name: Verify x86-64-v3 ISA requirement
         run: |
           # EL8 system readelf (binutils 2.30) cannot decode the x86 ISA
@@ -92,7 +113,6 @@ jobs:
           | Build system | autotools (autoconf + make + ccache + mold) |
           | `--enable-ccwarn` | yes |
           | `--enable-longtests` | yes |
-          | `--enable-light-debug` | yes (backtrace-quality debug info) |
           | `--enable-partial-static` | no (`--disable-partial-static`) |
           | jemalloc | yes (auto-detected, dynamic) |
           | Target CPU | `x86-64-v3` (Haswell 2013+) |
@@ -120,7 +140,7 @@ jobs:
           ## Verification
 
           - Regression suite: `test_regress` dist-vlt hashset 0/4 (official suite)
-          - Smoke test: minimal design verilated, compiled and run with VCD tracing
+          - Smoke test: bundled fulladder design verilated and run, checks 3+4==7
           - Clean-container install + smoke: AlmaLinux 8 (RPM), Debian 10 (DEB, glibc 2.28 floor)
           - Dynamic dependency whitelist and x86-64-v3 ISA requirement asserted
 
@@ -138,8 +158,9 @@ jobs:
           | Script interpreters | `perl`, `python3` | `perl`, `python3` |
           | C++ model compilation | `make`, `gcc-c++` | `make`, `g++` |
           | C++ standard library | `libstdc++` | `libstdc++6` |
+          | GCC atomic helpers | `libatomic` | `libatomic1` |
           | FST waveform (headers) | `zlib-devel`, `lz4-devel` | `zlib1g-dev`, `liblz4-dev` |
-          | Memory allocation | `jemalloc` | `libjemalloc2` |
+          | Memory allocation | `jemalloc` (EPEL) | `libjemalloc2` |
 
           ## Included Binaries
 
@@ -147,7 +168,7 @@ jobs:
           |------|-------------|
           | `verilator` | Main entry point |
           | `verilator_bin` | Compiler engine |
-          | `verilator_bin_dbg` | Debug engine (light-debug symbols, backtraces) |
+          | `verilator_bin_dbg` | Debug engine (full debug symbols, backtraces) |
           | `verilator_coverage_bin_dbg` | Coverage engine |
 
           ## Optional Runtime Dependencies
@@ -280,7 +301,7 @@ jobs:
           # Same tool set as official ci-install.bash (test stage)
           apt-get install -y ccache gdb jq lcov libfl-dev libsystemc-dev \
             mold libjemalloc-dev zlib1g-dev liblz4-dev python3-distro \
-            python3-clang z3
+            python3-clang z3 curl ca-certificates libatomic1
 
       - name: Install wavediff
         run: |
@@ -342,6 +363,9 @@ jobs:
         with:
           name: packages
           path: dist
+
+      - name: Enable EPEL (jemalloc runtime dependency)
+        run: dnf install -y epel-release
 
       - name: Install RPM
         run: dnf install -y ./dist/*.rpm

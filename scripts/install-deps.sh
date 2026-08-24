@@ -70,6 +70,32 @@ if ! ccache --version 2>/dev/null | grep -q "${CCACHE_VERSION}"; then
     rm -rf "${_tmpdir}"
 fi
 
+# ----- bison 3.8.2 (parser generator) -----
+# EL8 ships bison 3.0.4, whose generated parsers predate upstream's golden
+# files: syntax errors at the end of input say "unexpected $end" where
+# bison >= 3.8 says "unexpected end of file" (bison 3.8 NEWS: the special
+# tokens now have string aliases, so messages refer to "end of file" rather
+# than the cryptic "$end").  Verilator regenerates V3ParseBison.c from
+# verilog.y at build time, so the bison version is baked into the shipped
+# verilator_bin: with 3.0.4 the package fails the upstream dist test
+# (vlt/t_fuzz_eof_bad) and prints diagnostics that differ from every current
+# distro build.  Upstream CI uses bison 3.8.2; /usr/local/bin shadows EL8's.
+BISON_VERSION=3.8.2
+if ! bison --version 2>/dev/null | grep -q "Bison) ${BISON_VERSION}"; then
+    _tmpdir="$(mktemp -d)"
+    curl -fsSL "https://ftp.gnu.org/gnu/bison/bison-${BISON_VERSION}.tar.xz" |
+        tar xJ -C "${_tmpdir}"
+    (
+        cd "${_tmpdir}/bison-${BISON_VERSION}"
+        ./configure --prefix=/usr/local --disable-nls
+        make -j"$(nproc)"
+        make install
+    )
+    rm -rf "${_tmpdir}"
+fi
+bison --version | head -1 | grep -q "Bison) ${BISON_VERSION}" ||
+    { echo "ERROR: bison ${BISON_VERSION} is not the active bison" >&2; exit 1; }
+
 # ----- Packaging tools -----
 dnf install -y \
     rpm-build \
