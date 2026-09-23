@@ -78,6 +78,11 @@ if (-Not $p.WaitForExit(180000)) {
 if ($p.ExitCode -ne 0) { throw "example.exe failed with exit code $($p.ExitCode)" }
 Pop-Location; Pop-Location; Pop-Location
 
+# ----- Drop the example build tree: it is test output, not part of the
+# distribution (otherwise the ZIP carries ~6 MB of .obj/.exe/.tlog files) -----
+$ExampleBuild = Join-Path $InstallDir "examples/cmake_tracing_c/build"
+if (Test-Path $ExampleBuild) { Remove-Item -Recurse -Force $ExampleBuild }
+
 # ----- Smoke: verilator_bin --version -----
 & (Join-Path $InstallDir "bin/verilator_bin.exe") --version
 if ($LASTEXITCODE -ne 0) { throw "verilator_bin --version failed" }
@@ -125,6 +130,8 @@ Pop-Location
 # ----- Verify the archive -----
 Write-Host "=== Archive contents (top level) ==="
 tar -tf $zip | ForEach-Object { ($_ -split '/')[0] } | Sort-Object -Unique
+$leftovers = tar -tf $zip | Select-String -SimpleMatch "examples/cmake_tracing_c/build"
+if ($leftovers) { throw "ZIP still contains $($leftovers.Count) example build artifacts" }
 Get-Item $zip | ForEach-Object {
     Write-Host ("=== {0} ({1:N1} MB) ===" -f $_.Name, ($_.Length / 1MB))
 }

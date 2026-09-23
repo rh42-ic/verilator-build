@@ -113,6 +113,7 @@ jobs:
           | Build system | autotools (autoconf + make + ccache + mold) |
           | `--enable-ccwarn` | yes |
           | `--enable-longtests` | yes |
+          | `--enable-light-debug` | yes (5.052+: minimal compressed debug info) |
           | `--enable-partial-static` | no (`--disable-partial-static`) |
           | jemalloc | yes (auto-detected, dynamic) |
           | Target CPU | `x86-64-v3` (Haswell 2013+) |
@@ -168,7 +169,7 @@ jobs:
           |------|-------------|
           | `verilator` | Main entry point |
           | `verilator_bin` | Compiler engine |
-          | `verilator_bin_dbg` | Debug engine (full debug symbols, backtraces) |
+          | `verilator_bin_dbg` | Debug engine (minimal compressed debug info, backtraces) |
           | `verilator_coverage_bin_dbg` | Coverage engine |
 
           ## Optional Runtime Dependencies

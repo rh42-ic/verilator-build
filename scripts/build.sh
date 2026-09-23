@@ -30,8 +30,12 @@ autoconf
 # Flags match the official CI (ci/ci-build.bash) where possible:
 #   --enable-ccwarn        official CI default (ccwarn=true): warnings are errors
 #   --enable-longtests     official build flag (affects test_regress only)
-# --enable-light-debug is NOT passed: Verilator 5.050's configure does not
-# recognize it (configure: WARNING: unrecognized options in the build log).
+#   --enable-light-debug   official CI always passes this (reusable-build.yml):
+#     the shipped debug engine gets -Og -ggdb1 -fdebug-info-for-profiling -gz,
+#     i.e. compressed line info only, enough for backtraces. Without it 5.052+
+#     defaults to -O0 -ggdb full debug info, ballooning verilator_bin_dbg to
+#     ~227 MB. The option only exists in 5.052+; older tags (e.g. 5.050) do
+#     not recognize it, so it is passed only when configure.ac supports it.
 # jemalloc is NOT passed explicitly: like the official CI, configure
 # auto-detects it (default=check) from the jemalloc-devel package installed
 # by install-deps.sh.
@@ -51,11 +55,23 @@ CFLAGS="-march=x86-64-v3 -mtune=generic -O3 -ffunction-sections -fdata-sections"
 CXXFLAGS="${CFLAGS}"
 LDFLAGS="-Wl,--as-needed -Wl,-z,relro -Wl,-z,now -static-libgcc -Wl,-gc-sections -Wl,-z,x86-64-v3"
 
+CONFIGURE_ARGS=(
+    --prefix=/usr
+    --enable-ccwarn
+    --enable-longtests
+    --disable-partial-static
+)
+LIGHT_DEBUG=no
+if grep -q 'enable-light-debug' configure.ac; then
+    CONFIGURE_ARGS+=(--enable-light-debug)
+    LIGHT_DEBUG=yes
+    echo "==> ${TAG} supports --enable-light-debug: shipping a minimal debug engine"
+else
+    echo "==> ${TAG} has no --enable-light-debug: debug engine uses upstream defaults"
+fi
+
 ./configure \
-    --prefix=/usr \
-    --enable-ccwarn \
-    --enable-longtests \
-    --disable-partial-static \
+    "${CONFIGURE_ARGS[@]}" \
     CFLAGS="${CFLAGS}" \
     CXXFLAGS="${CXXFLAGS}" \
     LDFLAGS="${LDFLAGS}"
@@ -102,6 +118,19 @@ find "${STAGING_DIR}" -type f -executable -print0 2>/dev/null | while IFS= read 
     esac
     file --brief "$f" | grep -qi 'elf' && strip "$f" || true
 done
+
+# Sanity check the debug engine: with --enable-light-debug it must stay small
+# (compressed line info only; expected well under 64 MB). A silent regression
+# to the full debug default would ship a ~227 MB binary unnoticed.
+if [ "${LIGHT_DEBUG}" = "yes" ]; then
+    DBG_BIN="${STAGING_DIR}/usr/bin/verilator_bin_dbg"
+    DBG_BYTES=$(stat -c %s "${DBG_BIN}")
+    echo "verilator_bin_dbg: $((DBG_BYTES / 1024 / 1024)) MB (light debug)"
+    if [ "${DBG_BYTES}" -gt $((128 * 1024 * 1024)) ]; then
+        echo "ERROR: ${DBG_BIN} is $((DBG_BYTES / 1024 / 1024)) MB despite --enable-light-debug" >&2
+        exit 1
+    fi
+fi
 
 # ----- Build packages with fpm -----
 mkdir -p "${DIST_DIR}"
