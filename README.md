@@ -55,6 +55,8 @@ apt install ./verilator-{version}-1_amd64.deb
 ├── verilator
 ├── verilator_bin
 ├── verilator_bin_dbg
+├── verilator_coverage
+├── verilator_coverage_bin
 ├── verilator_coverage_bin_dbg
 ├── verilator_gantt
 ├── verilator_profcfunc

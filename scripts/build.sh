@@ -29,7 +29,6 @@ autoconf
 # x86-64-v3: Haswell (2013+) — AVX2, FMA, BMI, BMI2, LZCNT
 # Flags match the official CI (ci/ci-build.bash) where possible:
 #   --enable-ccwarn        official CI default (ccwarn=true): warnings are errors
-#   --enable-longtests     official build flag (affects test_regress only)
 #   --enable-light-debug   official CI always passes this (reusable-build.yml):
 #     the shipped debug engine gets -Og -ggdb1 -fdebug-info-for-profiling -gz,
 #     i.e. compressed line info only, enough for backtraces. Without it 5.052+
@@ -39,6 +38,15 @@ autoconf
 # jemalloc is NOT passed explicitly: like the official CI, configure
 # auto-detects it (default=check) from the jemalloc-devel package installed
 # by install-deps.sh.
+#
+# Deviation from the official CI:
+#   --enable-longtests  dropped. The official CI builds on modern Ubuntu,
+#     but since 5.054 configure hard-requires runnable wavetools >= 0.1.3
+#     (wavecat/wavediff, prebuilt binaries need glibc >= 2.34) whenever
+#     longtests are enabled, and this EL8 build container runs glibc 2.28.
+#     The flag only affects verilator's own test_regress long-running tests,
+#     never the shipped binaries; the regression suite still runs in the
+#     test job against the installed package.
 #
 # Deviations kept for old-OS compatibility only:
 #   --disable-partial-static  --enable-partial-static (the default) links
@@ -58,7 +66,6 @@ LDFLAGS="-Wl,--as-needed -Wl,-z,relro -Wl,-z,now -static-libgcc -Wl,-gc-sections
 CONFIGURE_ARGS=(
     --prefix=/usr
     --enable-ccwarn
-    --enable-longtests
     --disable-partial-static
 )
 LIGHT_DEBUG=no
